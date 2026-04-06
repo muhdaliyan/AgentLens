@@ -4,6 +4,8 @@
 
 ---
 
+![AgentLens CLI Demo](bash.png)
+
 ## 🚀 Features
 
 -   **Agentic Reasoning**: Doesn't just guess—it researches. The agent autonomously decides if it needs to browse the web for up-to-date information.
@@ -50,9 +52,6 @@ Run the discovery agent:
 uv run main.py
 ```
 
-### CLI Demo
-![AgentLens CLI Demo](bash.png)
-
 ### How it works:
 1.  **Request**: You provide a workflow description (e.g., "Marketing Automation Agent").
 2.  **Autonomous Search**: AgentLens recognizes if it needs the web.
@@ -70,8 +69,9 @@ uv run main.py
 
 ---
 
+## Purpose
+This project was developed as part of the **NAVTTC Mid-Term Exam** to demonstrate proficiency in agentic AI, tool calling, and Python SDK integration.
+
 ## 📜 License
 MIT
 
-## Author
-Muhammad Aliyan
