@@ -1,130 +1,110 @@
 """
 agent_core.py
-OpenAI Python SDK pointed at Ollama — no API key needed.
-Model: gemini-3-flash-preview:cloud
+Unified Agentic Core for AgentLens.
 """
 
 import json
 import re
 from openai import OpenAI
-from config import OLLAMA_BASE_URL, OLLAMA_MODEL, SYSTEM_PROMPT
 
 try:
     from ddgs import DDGS
 except ImportError:
     DDGS = None
 
+from config import OLLAMA_BASE_URL, OLLAMA_MODEL, SYSTEM_PROMPT
 
-def _client() -> OpenAI:
-    return OpenAI(
-        api_key="ollama",                      # required by SDK but ignored by Ollama
-        base_url=f"{OLLAMA_BASE_URL}/v1",      # Ollama OpenAI-compatible endpoint
-    )
+
+# Single client instance for performance
+client = OpenAI(api_key="ollama", base_url=f"{OLLAMA_BASE_URL}/v1")
+
+# Static tool definition
+TOOLS = [{
+    "type": "function",
+    "function": {
+        "name": "web_search",
+        "description": "Searches for latest LLMs and benchmarks (2026).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query"}
+            },
+            "required": ["query"]
+        }
+    }
+}]
 
 
 def web_search(query: str) -> str:
-    """Search the web for the latest AI models and agents."""
+    """Performs a web search via DuckDuckGo."""
     if not DDGS:
-        return "Search tool not installed. Run 'uv add duckduckgo-search'."
+        return "Search tool (duckduckgo-search) not installed."
     
-    # We refine the search to focus on latest LLMs and benchmarks
-    refined_query = f"latest LLMs for {query} 2024 2025 reddit benchmarks"
     try:
         with DDGS() as ddgs:
-            results = ddgs.text(refined_query, max_results=5)
+            results = list(ddgs.text(f"latest LLMs {query} 2026 benchmarks", max_results=5))
             if not results:
-                return "No search results found."
-            
-            formatted = "\n\n".join([
-                f"Title: {r.get('title')}\nSnippet: {r.get('body')}\nLink: {r.get('href')}"
-                for r in results
-            ])
-            return formatted
+                return "No results found."
+            return "\n\n".join([f"Title: {r['title']}\nSnippet: {r['body']}" for r in results])
     except Exception as e:
-        return f"Search failed: {str(e)}"
+        return f"Search error: {e}"
 
 
 def search_llms(query: str) -> list[dict]:
-    """Agent that can choose to search the web if it needs up-to-date recommendations."""
-    client = _client()
-
-    # 1. Define the tool for the API
-    tools = [{
-        "type": "function",
-        "function": {
-            "name": "web_search",
-            "description": "Searches the web for latest LLMs and benchmarks (April 2026).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "The search query (e.g., 'latest LLMs for coding')"}
-                },
-                "required": ["query"]
-            }
-        }
-    }]
-
+    """Agentic workflow: Decides if it needs to search, then returns ranked models."""
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": f"Agentic workflow: {query}"}
     ]
 
-    # 2. First call: The model decides if it needs a tool
+    # Initial decision
     response = client.chat.completions.create(
         model=OLLAMA_MODEL,
         messages=messages,
-        tools=tools,
-        tool_choice="auto",
+        tools=TOOLS,
     )
 
-    message = response.choices[0].message
+    msg = response.choices[0].message
+    if not msg.tool_calls:
+        return _parse_json(msg.content)
 
-    # 3. Handle Tool Calls (The Agentic Loop)
-    if message.tool_calls:
-        print(f"[AgentLens] Agent decided it needs the web! Calling search tool...")
-        messages.append(message)  # Add model's request to the thread
+    # Handle Tool Calls
+    print(f"[AgentLens] Running search for: {query}...")
+    messages.append(msg)
 
-        for tool_call in message.tool_calls:
-            if tool_call.function.name == "web_search":
-                # Parse arguments and call our search function
-                args = json.loads(tool_call.function.arguments)
-                search_data = web_search(args["query"])
-                
-                # Append tool result to thread
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "name": "web_search",
-                    "content": search_data
-                })
+    for tool in msg.tool_calls:
+        if tool.function.name == "web_search":
+            args = json.loads(tool.function.arguments)
+            result = web_search(args.get("query", query))
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tool.id,
+                "name": "web_search",
+                "content": result
+            })
 
-        # 4. Final call: Send tool results back to the LLM
-        response = client.chat.completions.create(
-            model=OLLAMA_MODEL,
-            messages=messages,
-        )
-
-    # Return the final results (JSON parsed)
-    text = response.choices[0].message.content
-    return _parse_json(text)
+    # Final completion with tool results
+    final_resp = client.chat.completions.create(model=OLLAMA_MODEL, messages=messages)
+    return _parse_json(final_resp.choices[0].message.content)
 
 
 def list_ollama_models() -> list[str]:
-    """List all models installed in Ollama."""
+    """Retrieves list of all local Ollama models."""
     try:
-        return [m.id for m in _client().models.list().data]
+        return [m.id for m in client.models.list().data]
     except Exception as e:
         print(f"[Ollama] {e}")
         return []
 
 
 def _parse_json(text: str) -> list[dict]:
-    cleaned = re.sub(r"```(?:json)?", "", text).strip().rstrip("`").strip()
-    s, e = cleaned.find("["), cleaned.rfind("]")
-    if s == -1 or e == -1:
-        return []
+    """Robust extractor for JSON lists wrapped in markdown."""
+    if not text: return []
+    # Strip markdown and isolate potential JSON block
+    match = re.search(r"(\[.*\])", text, re.DOTALL)
+    if not match: return []
     try:
-        result = json.loads(cleaned[s:e+1])
-        return result if isinstance(result, list) else []
+        return json.loads(match.group(1))
     except json.JSONDecodeError:
         return []
+
