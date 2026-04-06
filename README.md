@@ -50,6 +50,9 @@ Run the discovery agent:
 uv run main.py
 ```
 
+### CLI Demo
+![AgentLens CLI Demo](bash.png)
+
 ### How it works:
 1.  **Request**: You provide a workflow description (e.g., "Marketing Automation Agent").
 2.  **Autonomous Search**: AgentLens recognizes if it needs the web.
