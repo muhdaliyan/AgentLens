@@ -69,3 +69,6 @@ uv run main.py
 
 ## 📜 License
 MIT
+
+## Author
+Muhammad Aliyan
